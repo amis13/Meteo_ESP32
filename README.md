@@ -148,6 +148,164 @@ Regla rapida para no liarte con los LEDs:
 6. Sustituye esa MAC por la MAC real del ESP32 interior.
 7. Carga `esp32_bme_tx/esp32_bme_tx.ino` en el ESP32 exterior.
 
+## Configuracion inicial por terminal
+
+Si prefieres hacerlo todo por `arduino-cli`, el flujo es este.
+
+### 1. Ver que puerto usa cada ESP32
+
+Conecta una placa y ejecuta:
+
+```bash
+arduino-cli board list
+```
+
+Te saldra algo parecido a esto:
+
+```text
+Port         Protocol Type              Board Name          FQBN
+/dev/ttyUSB0 serial   Serial Port (USB) ESP32 Dev Module   esp32:esp32:esp32
+```
+
+Apunta el puerto. En Linux suele ser algo como `/dev/ttyUSB0` o `/dev/ttyACM0`. En Windows puede ser algo como `COM3`.
+
+### 2. Grabar el receptor interior
+
+Con el ESP32 interior conectado:
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32 esp32_oled_rx
+arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 esp32_oled_rx
+```
+
+Cambia `/dev/ttyUSB0` por tu puerto real.
+
+### 3. Leer la MAC del receptor
+
+Abre el monitor serie a `115200`:
+
+```bash
+arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200
+```
+
+Veras una linea como esta:
+
+```text
+MAC receptor: 24:6F:28:12:34:56
+```
+
+Esa es la direccion que necesita el emisor.
+
+### 4. Poner esa MAC en el emisor
+
+Abre el archivo `esp32_bme_tx/esp32_bme_tx.ino` y busca esta linea:
+
+```cpp
+uint8_t RECEIVER_MAC[6] = {0x24, 0x6F, 0x28, 0x00, 0x00, 0x00};
+```
+
+Si la MAC que viste fue:
+
+```text
+24:6F:28:12:34:56
+```
+
+la linea debe quedar asi:
+
+```cpp
+uint8_t RECEIVER_MAC[6] = {0x24, 0x6F, 0x28, 0x12, 0x34, 0x56};
+```
+
+Cada bloque separado por `:` se convierte en un valor con `0x`.
+
+### 5. Grabar el emisor exterior
+
+Conecta ahora el ESP32 exterior y localiza su puerto:
+
+```bash
+arduino-cli board list
+```
+
+Despues graba el sketch:
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32 esp32_bme_tx
+arduino-cli upload -p /dev/ttyUSB1 --fqbn esp32:esp32:esp32 esp32_bme_tx
+```
+
+Cambia `/dev/ttyUSB1` por el puerto real del segundo ESP32.
+
+### 6. Comprobar que funciona
+
+Para ver el log del emisor:
+
+```bash
+arduino-cli monitor -p /dev/ttyUSB1 -c baudrate=115200
+```
+
+Para ver el log del receptor:
+
+```bash
+arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200
+```
+
+En el receptor deberias ver paquetes recibidos. En el emisor deberias ver lectura, envio y luego entrada en `deep sleep`.
+
+## Scripts de ayuda
+
+He dejado scripts listos para no repetir comandos largos.
+
+### Ver puertos
+
+```bash
+./scripts/list_ports.sh
+```
+
+### Grabar el receptor interior
+
+```bash
+./scripts/flash_rx.sh /dev/ttyUSB0
+```
+
+### Ver la MAC del receptor
+
+```bash
+./scripts/monitor_rx.sh /dev/ttyUSB0
+```
+
+Cuando veas una linea como:
+
+```text
+MAC receptor: 24:6F:28:12:34:56
+```
+
+actualiza la MAC del emisor con:
+
+```bash
+./scripts/set_receiver_mac.sh 24:6F:28:12:34:56
+```
+
+### Grabar el emisor exterior
+
+```bash
+./scripts/flash_tx.sh /dev/ttyUSB1
+```
+
+### Ver el log del emisor
+
+```bash
+./scripts/monitor_tx.sh /dev/ttyUSB1
+```
+
+### Variables opcionales
+
+Si alguna vez necesitas cambiar la placa o el baudrate sin tocar los scripts:
+
+```bash
+ARDUINO_FQBN=esp32:esp32:esp32 ./scripts/flash_rx.sh /dev/ttyUSB0
+MONITOR_BAUDRATE=115200 ./scripts/monitor_rx.sh /dev/ttyUSB0
+```
+
 ## Funcionamiento
 
 - El ESP32 exterior despierta cada `60 segundos`
