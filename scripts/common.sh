@@ -73,7 +73,7 @@ upload_sketch() {
 monitor_port() {
   local port="$1"
 
-  arduino_cli monitor -p "$port" -c "baudrate=$MONITOR_BAUDRATE"
+  arduino_cli monitor -p "$port" -c "baudrate=$MONITOR_BAUDRATE,dtr=off,rts=off"
 }
 
 require_port_arg() {

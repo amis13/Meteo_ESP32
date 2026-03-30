@@ -3,13 +3,15 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_mac.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
 namespace Config {
 constexpr uint8_t I2C_SDA_PIN = 21;
 constexpr uint8_t I2C_SCL_PIN = 22;
-constexpr uint8_t OLED_ADDRESS = 0x3C;
+constexpr uint8_t OLED_ADDRESS_PRIMARY = 0x3C;
+constexpr uint8_t OLED_ADDRESS_SECONDARY = 0x3D;
 
 constexpr uint8_t LED_YELLOW_PIN = 26;
 constexpr uint8_t LED_BLUE_PIN = 27;
@@ -70,6 +72,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET_PIN);
 SensorPacket latestPacket = {};
 bool hasPacket = false;
 bool displayReady = false;
+uint8_t detectedOledAddress = 0;
 unsigned long lastPacketMs = 0;
 unsigned long lastBlinkToggleMs = 0;
 unsigned long stormAlertOverlayUntilMs = 0;
@@ -200,6 +203,23 @@ const __FlashStringHelper *forecastScreenLabel(ForecastTrend trend) {
   return F("N/D");
 }
 
+bool readStationMac(uint8_t *mac) {
+  return mac != nullptr && esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK;
+}
+
+void printMacLine(const __FlashStringHelper *label, const uint8_t *mac) {
+  Serial.print(label);
+  if (mac == nullptr) {
+    Serial.println(F("desconocida"));
+    return;
+  }
+
+  char macBuffer[18];
+  snprintf(macBuffer, sizeof(macBuffer), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  Serial.println(macBuffer);
+}
+
 void updateTemperatureLeds() {
   if (!hasPacket || latestPacket.sensorStatus != 1) {
     digitalWrite(Config::LED_YELLOW_PIN, LOW);
@@ -312,6 +332,42 @@ void drawWaitingScreen(const __FlashStringHelper *message) {
   display.display();
 }
 
+bool i2cDevicePresent(uint8_t address) {
+  Wire.beginTransmission(address);
+  return Wire.endTransmission() == 0;
+}
+
+void printI2cLineLevels() {
+  pinMode(Config::I2C_SDA_PIN, INPUT_PULLUP);
+  pinMode(Config::I2C_SCL_PIN, INPUT_PULLUP);
+  delay(5);
+
+  Serial.print(F("Nivel SDA: "));
+  Serial.println(digitalRead(Config::I2C_SDA_PIN) ? F("HIGH") : F("LOW"));
+  Serial.print(F("Nivel SCL: "));
+  Serial.println(digitalRead(Config::I2C_SCL_PIN) ? F("HIGH") : F("LOW"));
+}
+
+void scanI2cBus() {
+  Serial.println(F("Escaneo I2C:"));
+  bool foundAny = false;
+
+  for (uint8_t address = 1; address < 127; ++address) {
+    if (i2cDevicePresent(address)) {
+      foundAny = true;
+      Serial.print(F(" - dispositivo en 0x"));
+      if (address < 16) {
+        Serial.print('0');
+      }
+      Serial.println(address, HEX);
+    }
+  }
+
+  if (!foundAny) {
+    Serial.println(F(" - no se detecta ningun dispositivo I2C"));
+  }
+}
+
 void drawDataScreen(ForecastTrend trend, float deltaHpa,
                     unsigned long referenceAgeMs) {
   if (!displayReady) {
@@ -404,11 +460,30 @@ void onDataRecv(const uint8_t *macAddr, const uint8_t *incomingData, int len) {
 }
 
 void initDisplay() {
-  displayReady = display.begin(SSD1306_SWITCHCAPVCC, Config::OLED_ADDRESS);
-  if (!displayReady) {
-    Serial.println(F("No se detecta la OLED SSD1306"));
+  detectedOledAddress = 0;
+
+  if (i2cDevicePresent(Config::OLED_ADDRESS_PRIMARY)) {
+    detectedOledAddress = Config::OLED_ADDRESS_PRIMARY;
+  } else if (i2cDevicePresent(Config::OLED_ADDRESS_SECONDARY)) {
+    detectedOledAddress = Config::OLED_ADDRESS_SECONDARY;
+  }
+
+  if (detectedOledAddress == 0) {
+    Serial.println(F("No se detecta la OLED en 0x3C ni 0x3D"));
     return;
   }
+
+  displayReady = display.begin(SSD1306_SWITCHCAPVCC, detectedOledAddress);
+  if (!displayReady) {
+    Serial.println(F("La OLED responde en I2C pero SSD1306 no inicia"));
+    return;
+  }
+
+  Serial.print(F("OLED detectada en 0x"));
+  if (detectedOledAddress < 16) {
+    Serial.print('0');
+  }
+  Serial.println(detectedOledAddress, HEX);
 
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
@@ -419,8 +494,12 @@ void initEspNow() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
-  Serial.print(F("MAC receptor: "));
-  Serial.println(WiFi.macAddress());
+  uint8_t stationMac[6];
+  if (readStationMac(stationMac)) {
+    printMacLine(F("MAC receptor: "), stationMac);
+  } else {
+    Serial.println(F("MAC receptor: no disponible"));
+  }
 
   if (esp_now_init() != ESP_OK) {
     Serial.println(F("Error iniciando ESP-NOW"));
@@ -445,7 +524,9 @@ void setup() {
   delay(500);
 
   setupPins();
-  Wire.begin(Config::I2C_SDA_PIN, Config::I2C_SCL_PIN);
+  printI2cLineLevels();
+  Wire.begin(Config::I2C_SDA_PIN, Config::I2C_SCL_PIN, 100000);
+  scanI2cBus();
   initDisplay();
 
   Serial.println();

@@ -33,6 +33,8 @@ Instala estas librerias desde el Gestor de Librerias del IDE de Arduino:
 
 Esta es la forma mas simple de empezar. Recomendable si primero quieres ver que todo funciona.
 
+Esta opcion es ahora la configuracion por defecto del proyecto.
+
 Conexion del `BME280` al ESP32 exterior:
 
 - `ESP32 3V3` -> `BME280 VCC`
@@ -40,8 +42,12 @@ Conexion del `BME280` al ESP32 exterior:
 - `ESP32 GPIO 21` -> `BME280 SDA`
 - `ESP32 GPIO 22` -> `BME280 SCL`
 - `ESP32 GPIO 33` -> no conectar
+- `BME280 CSB` -> `3V3`
+- `BME280 SDO` -> `GND` para direccion `0x76`
 
 Con esta opcion el proyecto funciona, pero el `BME280` se queda alimentado todo el tiempo. El ESP32 exterior dormira, pero el sensor no se apagara.
+
+No tienes que cambiar nada del codigo para usar esta opcion.
 
 ## ESP32 exterior: opcion ahorro de bateria
 
@@ -66,6 +72,8 @@ Conexion:
 - `ESP32 GPIO 22` -> `BME280 SCL`
 - `ESP32 GPIO 33` -> `Gate` del `MOSFET` pasando antes por una resistencia de `100` a `220 ohm`
 - `Gate` del `MOSFET` -> `3V3` con una resistencia de `100k`
+- `BME280 CSB` -> `3V3`
+- `BME280 SDO` -> `GND` para direccion `0x76`
 
 Resumen de funcionamiento:
 
@@ -85,9 +93,17 @@ ESP32 3V3 ---- resistencia 100k-^
 ESP32 GND --------------------- BME280 GND
 ESP32 GPIO21 ------------------ BME280 SDA
 ESP32 GPIO22 ------------------ BME280 SCL
+BME280 CSB -------------------- 3V3
+BME280 SDO -------------------- GND
 ```
 
 En el codigo actual el pin de control es `GPIO 33`. Si algun dia quieres cambiarlo, esta en `SENSOR_POWER_PIN` dentro de `esp32_bme_tx/esp32_bme_tx.ino`.
+
+Para activar esta opcion en el codigo, cambia esto en `esp32_bme_tx/esp32_bme_tx.ino`:
+
+```cpp
+constexpr bool SENSOR_POWER_SWITCH_ENABLED = true;
+```
 
 ## ESP32 interior: OLED y LEDs
 
@@ -99,6 +115,13 @@ Conexion de la OLED al ESP32 interior:
 - `ESP32 GND` -> `OLED GND`
 - `ESP32 GPIO 21` -> `OLED SDA`
 - `ESP32 GPIO 22` -> `OLED SCL`
+
+Tu OLED de `4 pines` se conecta solo con esos cuatro cables:
+
+- `GND`
+- `VCC`
+- `SCL`
+- `SDA`
 
 ### LEDs
 
@@ -127,6 +150,8 @@ Regla rapida para no liarte con los LEDs:
 - `GPIO 33`: solo se usa si montas el corte de alimentacion del sensor
 - `3V3`: alimentacion del `BME280` o del `MOSFET`
 - `GND`: masa comun
+- `BME280 CSB`: ponlo a `3V3`
+- `BME280 SDO`: ponlo a `GND`
 
 ### ESP32 interior
 
@@ -148,44 +173,63 @@ Regla rapida para no liarte con los LEDs:
 6. Sustituye esa MAC por la MAC real del ESP32 interior.
 7. Carga `esp32_bme_tx/esp32_bme_tx.ino` en el ESP32 exterior.
 
-## Configuracion inicial por terminal
+## Configuracion inicial con PowerShell
 
-Si prefieres hacerlo todo por `arduino-cli`, el flujo es este.
+Si prefieres trabajar por terminal en Windows, este es el flujo bueno en `PowerShell`.
 
-### 1. Ver que puerto usa cada ESP32
+### 1. Abrir PowerShell en la carpeta del proyecto
 
-Conecta una placa y ejecuta:
+```powershell
+$ProjectRoot = "C:\ruta\al\repositorio\MeteoStation"
+Set-Location $ProjectRoot
+```
 
-```bash
+### 2. Preparar `arduino-cli` la primera vez
+
+Si ya tienes `arduino-cli`, el core `ESP32` y las librerias instaladas, puedes saltar este paso.
+
+```powershell
+arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+arduino-cli lib install "Adafruit BME280 Library" "Adafruit Unified Sensor" "Adafruit SSD1306" "Adafruit GFX Library"
+```
+
+Para comprobar que `arduino-cli` esta bien instalado:
+
+```powershell
+arduino-cli version
+arduino-cli board list
+```
+
+### 3. Grabar el receptor interior
+
+Conecta el ESP32 interior y mira que puerto `COM` usa:
+
+```powershell
 arduino-cli board list
 ```
 
 Te saldra algo parecido a esto:
 
 ```text
-Port         Protocol Type              Board Name          FQBN
-/dev/ttyUSB0 serial   Serial Port (USB) ESP32 Dev Module   esp32:esp32:esp32
+Port Protocol Type              Board Name        FQBN
+COMx serial   Serial Port (USB) ESP32 Dev Module esp32:esp32:esp32
 ```
 
-Apunta el puerto. En Linux suele ser algo como `/dev/ttyUSB0` o `/dev/ttyACM0`. En Windows puede ser algo como `COM3`.
+Guarda ese puerto en una variable. Por ejemplo:
 
-### 2. Grabar el receptor interior
-
-Con el ESP32 interior conectado:
-
-```bash
+```powershell
+$ReceiverPort = "COMx"
 arduino-cli compile --fqbn esp32:esp32:esp32 esp32_oled_rx
-arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 esp32_oled_rx
+arduino-cli upload -p $ReceiverPort --fqbn esp32:esp32:esp32 esp32_oled_rx
 ```
 
-Cambia `/dev/ttyUSB0` por tu puerto real.
+### 4. Leer la MAC del receptor
 
-### 3. Leer la MAC del receptor
+Abre el monitor serie con `DTR` y `RTS` desactivados para que el ESP32 no se resetee cada vez:
 
-Abre el monitor serie a `115200`:
-
-```bash
-arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200
+```powershell
+arduino-cli monitor -p $ReceiverPort -c baudrate=115200,dtr=off,rts=off
 ```
 
 Veras una linea como esta:
@@ -196,9 +240,26 @@ MAC receptor: 24:6F:28:12:34:56
 
 Esa es la direccion que necesita el emisor.
 
-### 4. Poner esa MAC en el emisor
+### 5. Poner esa MAC en el emisor
 
-Abre el archivo `esp32_bme_tx/esp32_bme_tx.ino` y busca esta linea:
+Tienes dos formas.
+
+Forma rapida con script de `PowerShell`:
+
+```powershell
+$ReceiverMac = "24:6F:28:12:34:56"
+.\scripts\set_receiver_mac.ps1 $ReceiverMac
+```
+
+Si Windows no te deja ejecutar scripts `.ps1`, usa:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\set_receiver_mac.ps1 $ReceiverMac
+```
+
+Forma manual:
+
+Abre `esp32_bme_tx/esp32_bme_tx.ino` y busca esta linea:
 
 ```cpp
 uint8_t RECEIVER_MAC[6] = {0x24, 0x6F, 0x28, 0x00, 0x00, 0x00};
@@ -216,44 +277,104 @@ la linea debe quedar asi:
 uint8_t RECEIVER_MAC[6] = {0x24, 0x6F, 0x28, 0x12, 0x34, 0x56};
 ```
 
-Cada bloque separado por `:` se convierte en un valor con `0x`.
+### 6. Grabar el emisor exterior
 
-### 5. Grabar el emisor exterior
+Conecta ahora el ESP32 exterior y vuelve a mirar que puerto `COM` usa:
 
-Conecta ahora el ESP32 exterior y localiza su puerto:
-
-```bash
+```powershell
 arduino-cli board list
 ```
 
-Despues graba el sketch:
+Guarda ese puerto en otra variable. Por ejemplo:
 
-```bash
+```powershell
+$TransmitterPort = "COMy"
 arduino-cli compile --fqbn esp32:esp32:esp32 esp32_bme_tx
-arduino-cli upload -p /dev/ttyUSB1 --fqbn esp32:esp32:esp32 esp32_bme_tx
+arduino-cli upload -p $TransmitterPort --fqbn esp32:esp32:esp32 esp32_bme_tx
 ```
 
-Cambia `/dev/ttyUSB1` por el puerto real del segundo ESP32.
-
-### 6. Comprobar que funciona
-
-Para ver el log del emisor:
-
-```bash
-arduino-cli monitor -p /dev/ttyUSB1 -c baudrate=115200
-```
+### 7. Comprobar que funciona
 
 Para ver el log del receptor:
 
-```bash
-arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200
+```powershell
+arduino-cli monitor -p $ReceiverPort -c baudrate=115200,dtr=off,rts=off
 ```
 
-En el receptor deberias ver paquetes recibidos. En el emisor deberias ver lectura, envio y luego entrada en `deep sleep`.
+Para ver el log del emisor:
 
-## Scripts de ayuda
+```powershell
+arduino-cli monitor -p $TransmitterPort -c baudrate=115200,dtr=off,rts=off
+```
 
-He dejado scripts listos para no repetir comandos largos.
+En el receptor deberias ver paquetes recibidos. En el emisor deberias ver deteccion del `BME280`, envio correcto y luego entrada en `deep sleep`.
+
+## Scripts de ayuda en PowerShell
+
+He dejado scripts `.ps1` para no repetir comandos largos en Windows.
+
+Si tu politica de ejecucion bloquea scripts, puedes lanzarlos con:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\nombre_del_script.ps1
+```
+
+### Ver puertos
+
+```powershell
+.\scripts\list_ports.ps1
+```
+
+### Grabar el receptor interior
+
+```powershell
+.\scripts\flash_rx.ps1 -Port COMx
+```
+
+### Ver la MAC del receptor
+
+```powershell
+.\scripts\monitor_rx.ps1 -Port COMx
+```
+
+Cuando veas una linea como:
+
+```text
+MAC receptor: 24:6F:28:12:34:56
+```
+
+actualiza la MAC del emisor con:
+
+```powershell
+.\scripts\set_receiver_mac.ps1 24:6F:28:12:34:56
+```
+
+### Grabar el emisor exterior
+
+```powershell
+.\scripts\flash_tx.ps1 -Port COMy
+```
+
+### Ver el log del emisor
+
+```powershell
+.\scripts\monitor_tx.ps1 -Port COMy
+```
+
+### Variables opcionales
+
+Si alguna vez necesitas cambiar la placa o el baudrate sin tocar los scripts:
+
+```powershell
+$env:ARDUINO_FQBN = "esp32:esp32:esp32"
+$env:MONITOR_BAUDRATE = "115200"
+.\scripts\flash_rx.ps1 -Port COMx
+.\scripts\monitor_rx.ps1 -Port COMx
+```
+
+## Scripts de ayuda en bash o WSL
+
+Tambien siguen disponibles los scripts `.sh`, pero son utiles sobre todo en Linux o en `WSL` si el puerto serie esta realmente visible como `/dev/ttyUSB0` o `/dev/ttyACM0`.
 
 ### Ver puertos
 
@@ -273,13 +394,7 @@ He dejado scripts listos para no repetir comandos largos.
 ./scripts/monitor_rx.sh /dev/ttyUSB0
 ```
 
-Cuando veas una linea como:
-
-```text
-MAC receptor: 24:6F:28:12:34:56
-```
-
-actualiza la MAC del emisor con:
+### Poner la MAC del receptor
 
 ```bash
 ./scripts/set_receiver_mac.sh 24:6F:28:12:34:56
@@ -295,15 +410,6 @@ actualiza la MAC del emisor con:
 
 ```bash
 ./scripts/monitor_tx.sh /dev/ttyUSB1
-```
-
-### Variables opcionales
-
-Si alguna vez necesitas cambiar la placa o el baudrate sin tocar los scripts:
-
-```bash
-ARDUINO_FQBN=esp32:esp32:esp32 ./scripts/flash_rx.sh /dev/ttyUSB0
-MONITOR_BAUDRATE=115200 ./scripts/monitor_rx.sh /dev/ttyUSB0
 ```
 
 ## Funcionamiento
@@ -337,6 +443,7 @@ En `esp32_oled_rx/esp32_oled_rx.ino` puedes cambiar:
 
 En `esp32_bme_tx/esp32_bme_tx.ino` puedes cambiar:
 
+- `SENSOR_POWER_SWITCH_ENABLED`
 - `SLEEP_INTERVAL_US`
 - `SEND_TIMEOUT_MS`
 - `SENSOR_POWER_PIN`
@@ -362,3 +469,48 @@ Si ahora mismo no quieres usar `MOSFET`, haz esto:
 - prueba primero que el sistema mide y recibe datos
 
 Cuando ya lo tengas funcionando, si quieres mas autonomia de bateria, pasas a la opcion con `MOSFET`.
+
+## Resumen para modulos OLED y BME280 habituales
+
+### OLED de 4 pines
+
+Una OLED I2C de `4 pines` normalmente tiene:
+
+- `GND`
+- `VCC`
+- `SCL`
+- `SDA`
+
+Conectala asi al ESP32 interior:
+
+- `OLED GND` -> `ESP32 GND`
+- `OLED VCC` -> `ESP32 3V3`
+- `OLED SCL` -> `ESP32 GPIO 22`
+- `OLED SDA` -> `ESP32 GPIO 21`
+
+### BME280 de 6 pines
+
+Un `BME280` de `6 pines` normalmente tiene:
+
+- `VCC`
+- `GND`
+- `SCL`
+- `SDA`
+- `CSB`
+- `SDO`
+
+Conectalo asi al ESP32 exterior:
+
+- `BME280 VCC` -> `ESP32 3V3`
+- `BME280 GND` -> `ESP32 GND`
+- `BME280 SCL` -> `ESP32 GPIO 22`
+- `BME280 SDA` -> `ESP32 GPIO 21`
+- `BME280 CSB` -> `ESP32 3V3`
+- `BME280 SDO` -> `ESP32 GND`
+
+Regla importante:
+
+- `CSB` a `3V3` para usar modo `I2C`
+- `SDO` a `GND` para direccion `0x76`
+
+Si algun dia `0x76` no funcionase, podrias probar con `SDO` a `3V3` para direccion `0x77`, pero el sketch ya intenta ambas automaticamente.
